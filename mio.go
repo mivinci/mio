@@ -78,12 +78,12 @@ func New(rwc io.ReadWriteCloser, opts ...Option) Session {
 		closed:  make(chan struct{}),
 	}
 
-	go s.recv()
-	go s.send()
+	go s.recvLoop()
+	go s.sendLoop()
 	return s
 }
 
-func (s *session) recv() {
+func (s *session) recvLoop() {
 	for {
 		select {
 		case <-s.closed:
@@ -103,7 +103,7 @@ func (s *session) recv() {
 	}
 }
 
-func (s *session) send() {
+func (s *session) sendLoop() {
 	for {
 		select {
 		case <-s.closed:
