@@ -3,20 +3,29 @@ package mio
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type Session interface {
+	// Addr returns the local address of the underlying transport.
+	Addr() net.Addr
+	// Open opens a new stream to the other endpoint.
 	Open(context.Context) (Stream, error)
+	// Accept accepts a new stream from the other endpoint.
 	Accept() (Stream, error)
+	// Close closes the session.
 	Close() error
 }
 
 type Stream interface {
-	io.ReadWriteCloser
+	net.Conn
+	// CloseWrite half closes the stream indicating that no more frames will
+	// be sent to the other endpoint.
 	CloseWrite() error
 }
 
@@ -34,9 +43,12 @@ type session struct {
 	accept       chan *stream
 	sendq        chan *frame
 	closed       chan struct{}
+
+	local  net.Addr
+	remote net.Addr
 }
 
-func New(rwc io.ReadWriteCloser, opts ...Option) *session {
+func New(rwc io.ReadWriteCloser, opts ...Option) Session {
 	options := Options{
 		AcceptQueueLimit: 32,
 		AcceptTimeout:    time.Millisecond,
@@ -49,9 +61,17 @@ func New(rwc io.ReadWriteCloser, opts ...Option) *session {
 		o(&options)
 	}
 
+	var local, remote net.Addr
+	if c, ok := rwc.(net.Conn); ok {
+		local = c.LocalAddr()
+		remote = c.RemoteAddr()
+	}
+
 	s := &session{
-		rwc:     rwc,
 		options: options,
+		rwc:     rwc,
+		local:   local,
+		remote:  remote,
 		streams: make(map[uint32]*stream),
 		accept:  make(chan *stream, options.AcceptQueueLimit),
 		sendq:   make(chan *frame, options.SendQueueLimit),
@@ -210,6 +230,14 @@ func (s *session) Open(ctx context.Context) (Stream, error) {
 			limit:  s.options.ReadBufferLimit,
 		},
 		sess: s,
+		local: addr{
+			id: id,
+			tr: s.local,
+		},
+		remote: addr{
+			id: id,
+			tr: s.remote,
+		},
 	}
 
 	s.Lock()
@@ -247,6 +275,10 @@ func (s *session) Close() error {
 	return s.sendFrame(&frame{h: h})
 }
 
+func (s *session) Addr() net.Addr {
+	return s.local
+}
+
 func (s *session) handleStreamOpen(id, size uint32) error {
 	select {
 	case <-s.closed:
@@ -269,6 +301,14 @@ func (s *session) handleStreamOpen(id, size uint32) error {
 			limit:  s.options.ReadBufferLimit,
 		},
 		sess: s,
+		local: addr{
+			id: id,
+			tr: s.local,
+		},
+		remote: addr{
+			id: id,
+			tr: s.remote,
+		},
 	}
 
 	s.streams[id] = str
@@ -319,6 +359,9 @@ type stream struct {
 	win   *window // flow controller
 	buf   *buffer // read buffer
 	sess  *session
+
+	local  addr
+	remote addr
 }
 
 func (s *stream) handleFrame(r io.Reader, h *Header) error {
@@ -331,8 +374,9 @@ func (s *stream) handleFrame(r io.Reader, h *Header) error {
 		return err
 	}
 	if flag.Isset(HFR) {
-		// half close the stream
-		s.buf.setError(io.EOF)
+		// half close the stream meaning no more
+		// frames will be sent by the sender
+		s.buf.throw(io.EOF)
 	}
 	return nil
 }
@@ -369,6 +413,26 @@ func (s *stream) Close() error {
 
 	// unlike TCP, we don't wait for the receiver to allows us to close
 	return s.closeWith(ErrClosed)
+}
+
+func (s *stream) LocalAddr() net.Addr {
+	return s.local
+}
+
+func (s *stream) RemoteAddr() net.Addr {
+	return s.remote
+}
+
+func (s *stream) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (s *stream) SetWriteDeadline(t time.Time) error {
+	return nil
+}
+
+func (s *stream) SetDeadline(t time.Time) error {
+	return nil
 }
 
 func (s *stream) write(p []byte, last bool) (n int, err error) {
@@ -410,7 +474,7 @@ func (s *stream) write(p []byte, last bool) (n int, err error) {
 		n += nw
 
 		if hc {
-			s.win.setError(ErrClosed)
+			s.win.throw(ErrClosed)
 			last = false
 		}
 	}
@@ -418,8 +482,8 @@ func (s *stream) write(p []byte, last bool) (n int, err error) {
 }
 
 func (s *stream) closeWith(err error) error {
-	s.buf.setError(err)
-	s.win.setError(err)
+	s.buf.throw(err)
+	s.win.throw(err)
 	s.sess.remove(s.id)
 	return nil
 }
@@ -464,7 +528,7 @@ func (w *window) Decr(n int) (int, error) {
 	}
 }
 
-func (w *window) setError(err error) {
+func (w *window) throw(err error) {
 	w.L.Lock()
 	w.err = err
 	w.Broadcast()
@@ -518,11 +582,24 @@ func (b *buffer) ReadFrom(r io.Reader) (int64, error) {
 	return n, nil
 }
 
-func (b *buffer) setError(err error) {
+func (b *buffer) throw(err error) {
 	b.L.Lock()
 	b.err = err
 	b.Broadcast()
 	b.L.Unlock()
+}
+
+type addr struct {
+	id uint32
+	tr net.Addr // address of the underlying connection
+}
+
+func (a addr) Network() string {
+	return a.tr.Network() + ":mio"
+}
+
+func (a addr) String() string {
+	return fmt.Sprintf("%s:%d", a.tr, a.id)
 }
 
 type Options struct {
