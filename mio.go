@@ -613,36 +613,51 @@ type Options struct {
 
 type Option func(*Options)
 
+// WithAcceptQueueLimit specifies the maximum number of streams waiting at
+// the accept channel. If the accept channel is full within AcceptTimeout,
+// ErrRefused will be sent back to the other endpoint. The value defaults
+// to 32.
 func WithAcceptQueueLimit(n int) Option {
 	return func(o *Options) {
 		o.AcceptQueueLimit = n
 	}
 }
 
+// WithAcceptTimeout specifies how long a new incoming stream have to wait at
+// a full accept channel before ErrRefused is sent back to the other endpoint.
+// The value defaults to 1 milliseconds.
 func WithAcceptTimeout(d time.Duration) Option {
 	return func(o *Options) {
 		o.AcceptTimeout = d
 	}
 }
 
+// WithSendQueueLimit specifies the maximum number of frames waiting at the
+// send queue. The value defaults to 128B.
 func WithSendQueueLimit(n int) Option {
 	return func(o *Options) {
 		o.SendQueueLimit = n
 	}
 }
 
+// WithReadBufferLimit specifies the maxmum bytes of payload waiting at every
+// stream read buffer. The value defaults to 128B.
 func WithReadBufferLimit(n int) Option {
 	return func(o *Options) {
 		o.ReadBufferLimit = n
 	}
 }
 
+// WithFrameSizeLimit specifies the maximum size of a frame. The value defaults
+// to 1024B.
 func WithFrameSizeLimit(n int) Option {
 	return func(o *Options) {
 		o.FrameSizeLimit = n
 	}
 }
 
+// WithWindowSizeLimit specifies the maximum window size for stream flow control.
+// The value defaults to 0xffffff.
 func WithWindowSizeLimit(n int) Option {
 	return func(o *Options) {
 		o.WindowSizeLimit = n
