@@ -125,6 +125,14 @@ CLOSE:
 	s.closeWith(ErrInternal)
 }
 
+func (s *session) sendFrame(fr *frame) error {
+	select {
+	case <-s.closed:
+	case s.sendq <- fr: // TODO: should we timeout here?
+	}
+	return nil
+}
+
 func (s *session) handleError(id uint32, err error) {
 	var code ErrorCode
 	var flag Flag
@@ -155,14 +163,6 @@ func (s *session) handleError(id uint32, err error) {
 	s.sendFrame(fr)
 }
 
-func (s *session) sendFrame(fr *frame) error {
-	select {
-	case <-s.closed:
-	case s.sendq <- fr: // TODO: should we timeout here?
-	}
-	return nil
-}
-
 func (s *session) handleFrame(h *Header) error {
 	switch flag := h.Flag(); {
 	case flag.Isset(Syn):
@@ -172,7 +172,7 @@ func (s *session) handleFrame(h *Header) error {
 		if !ok {
 			return ErrClosed
 		}
-		return str.handleFrame(io.LimitReader(s.rwc, int64(h.Size())), h)
+		return str.handleFrame(s.rwc, h)
 	case flag.Isset(RST):
 		s.Lock()
 		defer s.Unlock()
@@ -370,7 +370,8 @@ func (s *stream) handleFrame(r io.Reader, h *Header) error {
 		// update window size for the stream
 		return s.win.Incr(int(h.Size()))
 	}
-	if _, err := s.buf.ReadFrom(r); err != nil {
+	lr := io.LimitReader(r, int64(h.Size()))
+	if _, err := s.buf.ReadFrom(lr); err != nil {
 		return err
 	}
 	if flag.Isset(HFR) {
@@ -462,7 +463,7 @@ func (s *stream) write(p []byte, last bool) (n int, err error) {
 		if hc {
 			h.SetFlag(flagStreamHalfClose)
 		} else {
-			h.SetFlag(Syn)
+			h.SetFlag(flagStreamContinuation)
 		}
 
 		fr := &frame{h, p[n:m]}

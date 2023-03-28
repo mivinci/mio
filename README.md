@@ -26,8 +26,6 @@ When using TCP, since all MIO streams share one single TCP connection and due to
 
 Although this library can be used for any `io.ReadWriteCloser` interface, it is designed to mainly be used over TCP. Therefore, MIO uses only a per-stream sliding window for simple flow control, the frame order and other mechanisms making the stream reliable are guaranteed by TCP behind the scene.
 
-
-
 ## Security considerations
 
 Issue or PR me when you find some.
