@@ -22,9 +22,9 @@ The specification is placed in the source code, check out [frame.go](./frame.go)
 
 ## Tradeoffs
 
-When using TCP, since all MIO streams share one single TCP connection and due to the [head-of-line blocking](https://en.wikipedia.org/wiki/Head-of-line_blocking) problem, it is recommended to use MIO only if your application has a large number of small-payload streams like RPC or a tunnel for NAT traversal. Otherwise, MIO works bad af :)
+Although this library can be used for any `io.ReadWriteCloser` interface, it is designed to mainly be used over TCP. Therefore, MIO uses only a per-stream sliding window to implement simple flow control, the frame order and other mechanisms making the stream reliable are guaranteed by downstream protocols like TCP behind the scene, and leaving things like data compression or timeout control to upstream protocols.
 
-Although this library can be used for any `io.ReadWriteCloser` interface, it is designed to mainly be used over TCP. Therefore, MIO uses only a per-stream sliding window for simple flow control, the frame order and other mechanisms making the stream reliable are guaranteed by TCP behind the scene.
+When using TCP, since all MIO streams share one single TCP connection and due to the [head-of-line blocking](https://en.wikipedia.org/wiki/Head-of-line_blocking) problem, it is recommended to use MIO only if your application has a large number of small-payload streams like RPC or a tunnel for NAT traversal. Otherwise, MIO works bad af :)
 
 ## Security considerations
 
